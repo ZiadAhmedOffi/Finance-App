@@ -198,6 +198,7 @@ with tabs[1]:
     df = pd.read_sql("SELECT * FROM deals", conn)
 
     if not df.empty:
+        df["Index"] = range(1, len(df) + 1)
         df["Holding Period"] = df.exit_year - df.entry_year
         df["Post Money"] = df.entry_valuation + df.invested
         df["Ownership %"] = (df.invested / df["Post Money"]) * 100
@@ -219,13 +220,16 @@ with tabs[1]:
                     display_df[col] = display_df[col].astype(int).astype(str)
                 elif col == 'Ownership %':
                     display_df[col] = display_df[col].apply(lambda x: f"{fmt(x)}%" if not pd.isna(x) else "")
+                elif col == 'Index':
+                    display_df[col] = display_df[col].astype(str)
                 else:
                     display_df[col] = display_df[col].apply(fmt)
 
+        display_df.index = range(1, len(display_df) + 1)
         st.dataframe(display_df, use_container_width=True)
 
         for i, r in df.iterrows():
-            if st.button(f"❌ Remove {r.company}", key=r.id):
+            if st.button(f"❌ Remove Deal {r.Index}: {r.company}", key=r.id):
                 c.execute("DELETE FROM deals WHERE id=?", (r.id,))
                 conn.commit()
                 st.rerun()
@@ -268,5 +272,6 @@ with tabs[3]:
 
     fee_df = pd.DataFrame(fee_data)
     fee_df["Amount ($)"] = fee_df["Amount ($)"].apply(fmt)
+    fee_df.index = range(1, len(fee_df) + 1)
 
     st.table(fee_df)
