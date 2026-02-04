@@ -49,9 +49,16 @@ CREATE TABLE IF NOT EXISTS assumptions (
     exit_horizon INTEGER,
     min_ticket REAL,
     max_ticket REAL,
-    target_fund REAL
+    target_fund REAL,
+    actual_fund_life INTEGER
 )
 """)
+
+# Add new column if it doesn't exist
+try:
+    c.execute("ALTER TABLE assumptions ADD COLUMN actual_fund_life INTEGER DEFAULT 10")
+except sqlite3.OperationalError:
+    pass
 
 c.execute("""
 CREATE TABLE IF NOT EXISTS deals (
@@ -64,9 +71,21 @@ CREATE TABLE IF NOT EXISTS deals (
     base_factor REAL,
     downside_factor REAL,
     upside_factor REAL,
-    scenario TEXT
+    scenario TEXT,
+    company_type TEXT,
+    industry TEXT
 )
 """)
+
+# Add new columns if they don't exist
+try:
+    c.execute("ALTER TABLE deals ADD COLUMN company_type TEXT DEFAULT ''")
+except sqlite3.OperationalError:
+    pass
+try:
+    c.execute("ALTER TABLE deals ADD COLUMN industry TEXT DEFAULT ''")
+except sqlite3.OperationalError:
+    pass
 
 conn.commit()
 
@@ -115,19 +134,20 @@ if not st.session_state.auth:
     st.stop()
 
 # ------------------ LOAD ASSUMPTIONS ------------------
-c.execute("SELECT fund_life, exit_horizon, min_ticket, max_ticket, target_fund FROM assumptions LIMIT 1")
+c.execute("SELECT fund_life, exit_horizon, min_ticket, max_ticket, target_fund, actual_fund_life FROM assumptions LIMIT 1")
 row = c.fetchone()
 
-fund_life, exit_horizon, min_ticket, max_ticket, target_fund = row if row else (10, 5, 0.0, 0.0, 0.0)
+investment_period, exit_horizon, min_ticket, max_ticket, target_fund, fund_life = row if row else (10, 5, 0.0, 0.0, 0.0, 10)
 
 # ------------------ APP ------------------
 st.title("📊 Fund Financial Dashboard")
-tabs = st.tabs(["📌 Assumptions", "💼 Deals", "📈 Dashboard"])
+tabs = st.tabs(["📌 Model Inputs", "💼 Deal Prognosis", "📈 Dashboard", "💰 Admin Fee"])
 
-# ------------------ ASSUMPTIONS ------------------
+# ------------------ MODEL INPUTS ------------------
 with tabs[0]:
-    st.subheader("Fund Assumptions")
+    st.subheader("Model Inputs")
 
+    investment_period = st.number_input("Investment Period (Years)", 1, 20, investment_period)
     fund_life = st.number_input("Fund Life (Years)", 1, 20, fund_life)
     exit_horizon = st.number_input("Exit Horizon (Years)", 1, 20, exit_horizon)
     min_ticket = st.number_input("Minimum Ticket ($)", 0.0, value=min_ticket, step=10_000.0)
@@ -137,8 +157,8 @@ with tabs[0]:
     if st.button("Save Assumptions"):
         c.execute("DELETE FROM assumptions")
         c.execute("""
-            INSERT INTO assumptions VALUES (1,?,?,?,?,?)
-        """, (fund_life, exit_horizon, min_ticket, max_ticket, target_fund))
+            INSERT INTO assumptions VALUES (1,?,?,?,?,?,?)
+        """, (investment_period, exit_horizon, min_ticket, max_ticket, target_fund, fund_life))
         conn.commit()
         st.success("Saved")
 
@@ -149,12 +169,14 @@ with tabs[0]:
     col1.metric("Average Ticket", f"${fmt(avg_ticket)}")
     col2.metric("Expected Investors", f"{expected_investors:,}")
 
-# ------------------ DEALS ------------------
+# ------------------ DEAL PROGNOSIS ------------------
 with tabs[1]:
-    st.subheader("Add Deal")
+    st.subheader("Add Deal Prognosis")
 
     with st.form("deal"):
         company = st.text_input("Company")
+        company_type = st.text_input("Company Type")
+        industry = st.text_input("Industry")
         entry_year = st.number_input("Entry Year", 2000, 2100, 2024)
         invested = st.number_input("Amount Invested ($)", 0.0)
         entry_val = st.number_input("Entry Valuation ($)", 0.0)
@@ -166,19 +188,19 @@ with tabs[1]:
 
         if st.form_submit_button("Add Deal"):
             c.execute("""
-                INSERT INTO deals VALUES (NULL,?,?,?,?,?,?,?,?,?)
-            """, (company, entry_year, invested, entry_val, exit_year, base, down, up, scenario))
+                INSERT INTO deals VALUES (NULL,?,?,?,?,?,?,?,?,?,?,?)
+            """, (company, entry_year, invested, entry_val, exit_year, base, down, up, scenario, company_type, industry))
             conn.commit()
             st.success("Deal added")
 
-    st.subheader("Deals")
+    st.subheader("Deal Prognosis")
 
     df = pd.read_sql("SELECT * FROM deals", conn)
 
     if not df.empty:
         df["Holding Period"] = df.exit_year - df.entry_year
         df["Post Money"] = df.entry_valuation + df.invested
-        df["Ownership %"] = df.invested / df["Post Money"]
+        df["Ownership %"] = (df.invested / df["Post Money"]) * 100
 
         factor = df.apply(
             lambda r: r.base_factor if r.scenario == "Base"
@@ -187,13 +209,18 @@ with tabs[1]:
             axis=1
         )
 
-        df["Exit Valuation"] = df.entry_valuation * factor
-        df["Exit Value"] = df["Exit Valuation"] * df["Ownership %"]
+        df["Exit Valuation"] = df["Post Money"] * factor
+        df["Exit Value"] = df["Exit Valuation"] * (df["Ownership %"] / 100)
 
         display_df = df.copy()
         for col in display_df.columns:
             if display_df[col].dtype != object:
-                display_df[col] = display_df[col].apply(fmt)
+                if col in ['entry_year', 'exit_year']:
+                    display_df[col] = display_df[col].astype(int).astype(str)
+                elif col == 'Ownership %':
+                    display_df[col] = display_df[col].apply(lambda x: f"{fmt(x)}%" if not pd.isna(x) else "")
+                else:
+                    display_df[col] = display_df[col].apply(fmt)
 
         st.dataframe(display_df, use_container_width=True)
 
@@ -219,8 +246,27 @@ with tabs[2]:
 
         fund_irr = irr(moic, exit_horizon)
 
-        c1, c2, c3, c4 = st.columns(4)
+        c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Total Invested", f"${fmt(invested)}")
         c2.metric("Gross Exit Value", f"${fmt(exit_val)}")
         c3.metric("MOIC", f"{fmt(moic)}x")
         c4.metric("IRR", f"{fmt(fund_irr * 100)}%" if fund_irr == fund_irr else "N/A")
+        c5.metric("Total Deals", f"{len(df)}")
+
+# ------------------ ADMIN FEE ------------------
+with tabs[3]:
+    st.subheader("Administrative Fees")
+
+    admin_cost = 0.05 * target_fund
+    operations_fee = admin_cost
+    management_fee = admin_cost * investment_period
+
+    fee_data = {
+        "Fee Type": ["Admin Cost", "Operations Fee", "Management Fee Over Investment Period"],
+        "Amount ($)": [admin_cost, operations_fee, management_fee]
+    }
+
+    fee_df = pd.DataFrame(fee_data)
+    fee_df["Amount ($)"] = fee_df["Amount ($)"].apply(fmt)
+
+    st.table(fee_df)
