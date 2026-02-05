@@ -1,11 +1,11 @@
 import streamlit as st
-import sqlite3
 import pandas as pd
 import numpy as np
-import bcrypt
 import math
+import psycopg2
+from supabase import create_client
 
-# ------------------ PAGE CONFIG ------------------
+# ------------------ CONFIG ------------------
 st.set_page_config(
     page_title="Fund Financial Model",
     page_icon="📊",
@@ -31,117 +31,96 @@ def fmt(x):
         return ""
     return f"{x:,.3f}".rstrip("0").rstrip(".")
 
-# ------------------ DATABASE ------------------
-conn = sqlite3.connect("fund.db", check_same_thread=False)
-c = conn.cursor()
-
-c.execute("""
-CREATE TABLE IF NOT EXISTS users (
-    username TEXT PRIMARY KEY,
-    password BLOB
-)
-""")
-
-c.execute("""
-CREATE TABLE IF NOT EXISTS assumptions (
-    id INTEGER PRIMARY KEY,
-    fund_life INTEGER,
-    exit_horizon INTEGER,
-    min_ticket REAL,
-    max_ticket REAL,
-    target_fund REAL,
-    actual_fund_life INTEGER
-)
-""")
-
-# Add new column if it doesn't exist
-try:
-    c.execute("ALTER TABLE assumptions ADD COLUMN actual_fund_life INTEGER DEFAULT 10")
-except sqlite3.OperationalError:
-    pass
-
-c.execute("""
-CREATE TABLE IF NOT EXISTS deals (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    company TEXT,
-    entry_year INTEGER,
-    invested REAL,
-    entry_valuation REAL,
-    exit_year INTEGER,
-    base_factor REAL,
-    downside_factor REAL,
-    upside_factor REAL,
-    scenario TEXT,
-    company_type TEXT,
-    industry TEXT
-)
-""")
-
-# Add new columns if they don't exist
-try:
-    c.execute("ALTER TABLE deals ADD COLUMN company_type TEXT DEFAULT ''")
-except sqlite3.OperationalError:
-    pass
-try:
-    c.execute("ALTER TABLE deals ADD COLUMN industry TEXT DEFAULT ''")
-except sqlite3.OperationalError:
-    pass
-
-conn.commit()
-
-# ------------------ AUTH ------------------
-def hash_password(p):
-    return bcrypt.hashpw(p.encode(), bcrypt.gensalt())
-
-def check_password(p, h):
-    return bcrypt.checkpw(p.encode(), h)
-
-def login():
-    st.title("🔐 Login")
-
-    u = st.text_input("Username")
-    p = st.text_input("Password", type="password")
-
-    if st.button("Login"):
-        c.execute("SELECT password FROM users WHERE username=?", (u,))
-        r = c.fetchone()
-        if r and check_password(p, r[0]):
-            st.session_state.auth = True
-            st.rerun()
-        else:
-            st.error("Invalid credentials")
-
-    if st.button("Create Account"):
-        try:
-            c.execute("INSERT INTO users VALUES (?,?)", (u, hash_password(p)))
-            conn.commit()
-            st.success("Account created")
-        except:
-            st.error("User exists")
-
-# ------------------ IRR ------------------
 def irr(moic, exit_horizon):
     if moic <= 0 or exit_horizon <= 0:
         return np.nan
     return (moic ** (1 / exit_horizon)) - 1
 
-# ------------------ AUTH CHECK ------------------
-if "auth" not in st.session_state:
-    st.session_state.auth = False
+# ------------------ SUPABASE ------------------
+supabase = create_client(
+    st.secrets["SUPABASE_URL"],
+    st.secrets["SUPABASE_ANON_KEY"]
+)
 
-if not st.session_state.auth:
-    login()
+conn = psycopg2.connect(
+    st.secrets["SUPABASE_DB_URL"],
+    sslmode="require"
+)
+
+# ------------------ AUTH ------------------
+if "session" not in st.session_state:
+    st.session_state.session = None
+
+def login_ui():
+    st.title("🔐 Login")
+
+    email = st.text_input("Email")
+    password = st.text_input("Password", type="password")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        if st.button("Login"):
+            res = supabase.auth.sign_in_with_password({
+                "email": email,
+                "password": password
+            })
+            if res.session:
+                st.session_state.session = res.session
+                st.rerun()
+            else:
+                st.error("Invalid credentials")
+
+    with col2:
+        if st.button("Create Account"):
+            res = supabase.auth.sign_up({
+                "email": email,
+                "password": password
+            })
+            if res.user:
+                st.success("Account created. Please log in.")
+            else:
+                st.error("Signup failed")
+
+if not st.session_state.session:
+    login_ui()
     st.stop()
 
-# ------------------ LOAD ASSUMPTIONS ------------------
-c.execute("SELECT fund_life, exit_horizon, min_ticket, max_ticket, target_fund, actual_fund_life FROM assumptions LIMIT 1")
-row = c.fetchone()
+user_id = st.session_state.session.user.id
+user_email = st.session_state.session.user.email
 
-investment_period, exit_horizon, min_ticket, max_ticket, target_fund, fund_life = row if row else (10, 5, 0.0, 0.0, 0.0, 10)
+# ------------------ ENSURE USER ROW ------------------
+with conn.cursor() as c:
+    c.execute("""
+        insert into public.users (id, email)
+        values (%s, %s)
+        on conflict (id) do nothing
+    """, (user_id, user_email))
+    conn.commit()
+
+# ------------------ LOAD ASSUMPTIONS ------------------
+assumptions = pd.read_sql("""
+    select * from assumptions
+    where user_id = %s
+    limit 1
+""", conn, params=(user_id,))
+
+if assumptions.empty:
+    investment_period, exit_horizon, min_ticket, max_ticket, target_fund, fund_life = (10, 5, 0.0, 0.0, 0.0, 10)
+else:
+    r = assumptions.iloc[0]
+    investment_period = r.investment_period
+    exit_horizon = r.exit_horizon
+    min_ticket = r.min_ticket
+    max_ticket = r.max_ticket
+    target_fund = r.target_fund
+    fund_life = r.actual_fund_life
 
 # ------------------ APP ------------------
 st.title("📊 Fund Financial Dashboard")
 tabs = st.tabs(["📌 Model Inputs", "💼 Deal Prognosis", "📈 Dashboard", "💰 Admin Fee"])
+
+st.write(st.secrets.keys())
 
 # ------------------ MODEL INPUTS ------------------
 with tabs[0]:
@@ -155,23 +134,32 @@ with tabs[0]:
     target_fund = st.number_input("Target Fund Size ($)", 0.0, value=target_fund, step=100_000.0)
 
     if st.button("Save Assumptions"):
-        c.execute("DELETE FROM assumptions")
-        c.execute("""
-            INSERT INTO assumptions VALUES (1,?,?,?,?,?,?)
-        """, (investment_period, exit_horizon, min_ticket, max_ticket, target_fund, fund_life))
-        conn.commit()
+        with conn.cursor() as c:
+            c.execute("""
+                insert into assumptions
+                (user_id, investment_period, exit_horizon, min_ticket, max_ticket, target_fund, actual_fund_life)
+                values (%s,%s,%s,%s,%s,%s,%s)
+                on conflict (user_id) do update set
+                    investment_period = excluded.investment_period,
+                    exit_horizon = excluded.exit_horizon,
+                    min_ticket = excluded.min_ticket,
+                    max_ticket = excluded.max_ticket,
+                    target_fund = excluded.target_fund,
+                    actual_fund_life = excluded.actual_fund_life
+            """, (user_id, investment_period, exit_horizon, min_ticket, max_ticket, target_fund, fund_life))
+            conn.commit()
         st.success("Saved")
 
     avg_ticket = (min_ticket + max_ticket) / 2 if max_ticket > 0 else 0
     expected_investors = math.ceil(target_fund / avg_ticket) if avg_ticket > 0 else 0
 
-    col1, col2 = st.columns(2)
-    col1.metric("Average Ticket", f"${fmt(avg_ticket)}")
-    col2.metric("Expected Investors", f"{expected_investors:,}")
+    c1, c2 = st.columns(2)
+    c1.metric("Average Ticket", f"${fmt(avg_ticket)}")
+    c2.metric("Expected Investors", f"{expected_investors:,}")
 
 # ------------------ DEAL PROGNOSIS ------------------
 with tabs[1]:
-    st.subheader("Add Deal Prognosis")
+    st.subheader("Add Deal")
 
     with st.form("deal"):
         company = st.text_input("Company")
@@ -187,18 +175,21 @@ with tabs[1]:
         scenario = st.selectbox("Scenario", ["Base", "Downside", "Upside"])
 
         if st.form_submit_button("Add Deal"):
-            c.execute("""
-                INSERT INTO deals VALUES (NULL,?,?,?,?,?,?,?,?,?,?,?)
-            """, (company, entry_year, invested, entry_val, exit_year, base, down, up, scenario, company_type, industry))
-            conn.commit()
+            with conn.cursor() as c:
+                c.execute("""
+                    insert into deals
+                    (user_id, company, company_type, industry, entry_year, invested,
+                     entry_valuation, exit_year, base_factor, downside_factor,
+                     upside_factor, scenario)
+                    values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                """, (user_id, company, company_type, industry, entry_year, invested,
+                      entry_val, exit_year, base, down, up, scenario))
+                conn.commit()
             st.success("Deal added")
 
-    st.subheader("Deal Prognosis")
-
-    df = pd.read_sql("SELECT * FROM deals", conn)
+    df = pd.read_sql("select * from deals where user_id = %s", conn, params=(user_id,))
 
     if not df.empty:
-        df["Index"] = range(1, len(df) + 1)
         df["Holding Period"] = df.exit_year - df.entry_year
         df["Post Money"] = df.entry_valuation + df.invested
         df["Ownership %"] = (df.invested / df["Post Money"]) * 100
@@ -216,38 +207,23 @@ with tabs[1]:
         display_df = df.copy()
         for col in display_df.columns:
             if display_df[col].dtype != object:
-                if col in ['entry_year', 'exit_year']:
-                    display_df[col] = display_df[col].astype(int).astype(str)
-                elif col == 'Ownership %':
-                    display_df[col] = display_df[col].apply(lambda x: f"{fmt(x)}%" if not pd.isna(x) else "")
-                elif col == 'Index':
-                    display_df[col] = display_df[col].astype(str)
-                else:
-                    display_df[col] = display_df[col].apply(fmt)
+                display_df[col] = display_df[col].apply(fmt)
 
-        display_df.index = range(1, len(display_df) + 1)
         st.dataframe(display_df, use_container_width=True)
 
-        for i, r in df.iterrows():
-            if st.button(f"❌ Remove Deal {r.Index}: {r.company}", key=r.id):
-                c.execute("DELETE FROM deals WHERE id=?", (r.id,))
-                conn.commit()
+        for _, r in df.iterrows():
+            if st.button(f"❌ Remove {r.company}", key=str(r.id)):
+                with conn.cursor() as c:
+                    c.execute("delete from deals where id = %s and user_id = %s", (r.id, user_id))
+                    conn.commit()
                 st.rerun()
 
 # ------------------ DASHBOARD ------------------
 with tabs[2]:
-    st.subheader("Fund Overview")
-
     if not df.empty:
         invested = df.invested.sum()
         exit_val = df["Exit Value"].sum()
         moic = exit_val / invested if invested > 0 else 0
-
-        flows = []
-        for _, r in df.iterrows():
-            flows.append(-r.invested)
-            flows.append(r["Exit Value"])
-
         fund_irr = irr(moic, exit_horizon)
 
         c1, c2, c3, c4, c5 = st.columns(5)
@@ -259,19 +235,14 @@ with tabs[2]:
 
 # ------------------ ADMIN FEE ------------------
 with tabs[3]:
-    st.subheader("Administrative Fees")
-
     admin_cost = 0.05 * target_fund
     operations_fee = admin_cost
     management_fee = admin_cost * investment_period
 
-    fee_data = {
-        "Fee Type": ["Admin Cost", "Operations Fee", "Management Fee Over Investment Period"],
+    fee_df = pd.DataFrame({
+        "Fee Type": ["Admin Cost", "Operations Fee", "Management Fee"],
         "Amount ($)": [admin_cost, operations_fee, management_fee]
-    }
+    })
 
-    fee_df = pd.DataFrame(fee_data)
     fee_df["Amount ($)"] = fee_df["Amount ($)"].apply(fmt)
-    fee_df.index = range(1, len(fee_df) + 1)
-
     st.table(fee_df)
