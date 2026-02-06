@@ -6,14 +6,11 @@ import psycopg2
 from supabase import create_client
 
 # ------------------ CONFIG ------------------
-st.set_page_config(
-    page_title="Fund Financial Model",
-    page_icon="📊",
-    layout="wide"
-)
+st.set_page_config(page_title="Fund Financial Model", page_icon="📊", layout="wide")
 
 # ------------------ STYLES ------------------
-st.markdown("""
+st.markdown(
+    """
 <style>
 body { background-color: #0f172a; color: #e5e7eb; }
 [data-testid="stMetric"] {
@@ -23,7 +20,10 @@ body { background-color: #0f172a; color: #e5e7eb; }
 }
 h1, h2, h3 { color: #e5e7eb; }
 </style>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
+
 
 # ------------------ HELPERS ------------------
 def fmt(x):
@@ -31,25 +31,22 @@ def fmt(x):
         return ""
     return f"{x:,.3f}".rstrip("0").rstrip(".")
 
+
 def irr(moic, exit_horizon):
     if moic <= 0 or exit_horizon <= 0:
         return np.nan
     return (moic ** (1 / exit_horizon)) - 1
 
-# ------------------ SUPABASE ------------------
-supabase = create_client(
-    st.secrets["SUPABASE_URL"],
-    st.secrets["SUPABASE_ANON_KEY"]
-)
 
-conn = psycopg2.connect(
-    st.secrets["SUPABASE_DB_URL"],
-    sslmode="require"
-)
+# ------------------ SUPABASE ------------------
+supabase = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_ANON_KEY"])
+
+conn = psycopg2.connect(st.secrets["SUPABASE_DB_URL"], sslmode="require")
 
 # ------------------ AUTH ------------------
 if "session" not in st.session_state:
     st.session_state.session = None
+
 
 def login_ui():
     st.title("🔐 Login")
@@ -61,10 +58,9 @@ def login_ui():
 
     with col1:
         if st.button("Login"):
-            res = supabase.auth.sign_in_with_password({
-                "email": email,
-                "password": password
-            })
+            res = supabase.auth.sign_in_with_password(
+                {"email": email, "password": password}
+            )
             if res.session:
                 st.session_state.session = res.session
                 st.rerun()
@@ -73,14 +69,12 @@ def login_ui():
 
     with col2:
         if st.button("Create Account"):
-            res = supabase.auth.sign_up({
-                "email": email,
-                "password": password
-            })
+            res = supabase.auth.sign_up({"email": email, "password": password})
             if res.user:
                 st.success("Account created. Please log in.")
             else:
                 st.error("Signup failed")
+
 
 if not st.session_state.session:
     login_ui()
@@ -91,22 +85,73 @@ user_email = st.session_state.session.user.email
 
 # ------------------ ENSURE USER ROW ------------------
 with conn.cursor() as c:
-    c.execute("""
+    c.execute(
+        """
         insert into public.users (id, email)
         values (%s, %s)
         on conflict (id) do nothing
-    """, (user_id, user_email))
+    """,
+        (user_id, user_email),
+    )
     conn.commit()
 
 # ------------------ LOAD ASSUMPTIONS ------------------
-assumptions = pd.read_sql("""
+assumptions = pd.read_sql(
+    """
     select * from assumptions
     where user_id = %s
     limit 1
-""", conn, params=(user_id,))
+""",
+    conn,
+    params=(user_id,),
+)
 
 if assumptions.empty:
-    investment_period, exit_horizon, min_ticket, max_ticket, target_fund, fund_life, lockup_period, preferred_return, management_fee, admin_cost, t1_exp_moic, t2_exp_moic, t3_exp_moic, tier1_carry, tier2_carry, tier3_carry, target_ownership, expected_dilution, failure_rate, break_even_rate, high_return_rate = (10, 5, 0.0, 0.0, 0.0, 10, 3.0, 8.0, 2.0, 1.5, 2.5, 1.5, 1.25, 25.0, 25.0, 25.0, 75.0, 15.0, 30.0, 40.0, 35.0)
+    (
+        investment_period,
+        exit_horizon,
+        min_ticket,
+        max_ticket,
+        target_fund,
+        fund_life,
+        lockup_period,
+        preferred_return,
+        management_fee,
+        admin_cost,
+        t1_exp_moic,
+        t2_exp_moic,
+        t3_exp_moic,
+        tier1_carry,
+        tier2_carry,
+        tier3_carry,
+        target_ownership,
+        expected_dilution,
+        failure_rate,
+        break_even_rate,
+        high_return_rate,
+    ) = (
+        10,
+        5,
+        0.0,
+        0.0,
+        0.0,
+        10,
+        3.0,
+        8.0,
+        2.0,
+        1.5,
+        2.5,
+        1.5,
+        1.25,
+        25.0,
+        25.0,
+        25.0,
+        75.0,
+        15.0,
+        30.0,
+        40.0,
+        35.0,
+    )
 else:
     r = assumptions.iloc[0]
     investment_period = r.investment_period
@@ -131,22 +176,40 @@ else:
     break_even_rate = r.break_even_rate
     high_return_rate = r.high_return_rate
 
+
+# ------------------ DB OPERATIONS ------------------
+def delete_deal_from_db(deal_id):
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM deals WHERE id = %s", (deal_id,))
+        conn.commit()
+
+
 # ------------------ APP ------------------
 st.title("📊 Fund Financial Dashboard")
-tabs = st.tabs(["📌 Model Inputs", "💼 Deal Prognosis", "📈 Dashboard", "💰 Admin Fee"])
+tabs = st.tabs(["📌 Model Inputs", "💼 Deal Prognosis", "📈 Dashboard", "� Aggregated Exits" ,"💰 Admin Fee"])
 
 # ------------------ MODEL INPUTS ------------------
 with tabs[0]:
     st.subheader("Model Inputs")
 
-    investment_period = st.number_input("Investment Period (Years)", 1, 20, investment_period)
+    investment_period = st.number_input(
+        "Investment Period (Years)", 1, 20, investment_period
+    )
     fund_life = st.number_input("Fund Life (Years)", 1, 20, fund_life)
     exit_horizon = st.number_input("Exit Horizon (Years)", 1, 20, exit_horizon)
-    min_ticket = st.number_input("Minimum Ticket ($)", 0.0, value=min_ticket, step=10_000.0)
-    max_ticket = st.number_input("Maximum Ticket ($)", 0.0, value=max_ticket, step=10_000.0)
-    target_fund = st.number_input("Target Fund Size ($)", 0.0, value=target_fund, step=100_000.0)
+    min_ticket = st.number_input(
+        "Minimum Ticket ($)", 0.0, value=min_ticket, step=10_000.0
+    )
+    max_ticket = st.number_input(
+        "Maximum Ticket ($)", 0.0, value=max_ticket, step=10_000.0
+    )
+    target_fund = st.number_input(
+        "Target Fund Size ($)", 0.0, value=target_fund, step=100_000.0
+    )
     lockup_period = st.number_input("Lockup Period (Years)", 1, 20, lockup_period)
-    preferred_return = st.number_input("Preferred Return (%)", 0.0, 100.0, preferred_return)
+    preferred_return = st.number_input(
+        "Preferred Return (%)", 0.0, 100.0, preferred_return
+    )
     management_fee = st.number_input("Management Fee (%)", 0.0, 100.0, management_fee)
     admin_cost = st.number_input("Admin Cost (%)", 0.0, 100.0, admin_cost)
     t1_exp_moic = st.number_input("Top 1 Expected MOIC", 0.0, 20.0, t1_exp_moic)
@@ -155,15 +218,24 @@ with tabs[0]:
     tier1_carry = st.number_input("Tier 1 Carry (%)", 0.0, 100.0, tier1_carry)
     tier2_carry = st.number_input("Tier 2 Carry (%)", 0.0, 100.0, tier2_carry)
     tier3_carry = st.number_input("Tier 3 Carry (%)", 0.0, 100.0, tier3_carry)
-    target_ownership = st.number_input("Target Ownership (%)", 0.0, 100.0, target_ownership)
-    expected_dilution = st.number_input("Expected Dilution (%)", 0.0, 100.0, expected_dilution)
+    target_ownership = st.number_input(
+        "Target Ownership (%)", 0.0, 100.0, target_ownership
+    )
+    expected_dilution = st.number_input(
+        "Expected Dilution (%)", 0.0, 100.0, expected_dilution
+    )
     failure_rate = st.number_input("Failure Rate (%)", 0.0, 100.0, failure_rate)
-    break_even_rate = st.number_input("Break-even Rate (%)", 0.0, 100.0, break_even_rate)
-    high_return_rate = st.number_input("High Return Rate (%)", 0.0, 100.0, high_return_rate)
+    break_even_rate = st.number_input(
+        "Break-even Rate (%)", 0.0, 100.0, break_even_rate
+    )
+    high_return_rate = st.number_input(
+        "High Return Rate (%)", 0.0, 100.0, high_return_rate
+    )
 
     if st.button("Save Assumptions"):
         with conn.cursor() as c:
-            c.execute("""
+            c.execute(
+                """
                 insert into assumptions
                 (user_id, investment_period, exit_horizon, min_ticket, max_ticket, target_fund, actual_fund_life, lockup_period, preferred_return, management_fee, admin_cost, t1_exp_moic, t2_exp_moic, t3_exp_moic, tier1_carry, tier2_carry, tier3_carry, target_ownership, expected_dilution, failure_rate, break_even_rate, high_return_rate)
                 values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
@@ -189,7 +261,32 @@ with tabs[0]:
                     failure_rate = excluded.failure_rate,
                     break_even_rate = excluded.break_even_rate,
                     high_return_rate = excluded.high_return_rate
-            """, (user_id, investment_period, exit_horizon, min_ticket, max_ticket, target_fund, fund_life, lockup_period, preferred_return, management_fee, admin_cost, t1_exp_moic, t2_exp_moic, t3_exp_moic, tier1_carry, tier2_carry, tier3_carry, target_ownership, expected_dilution, failure_rate, break_even_rate, high_return_rate))
+            """,
+                (
+                    user_id,
+                    investment_period,
+                    exit_horizon,
+                    min_ticket,
+                    max_ticket,
+                    target_fund,
+                    fund_life,
+                    lockup_period,
+                    preferred_return,
+                    management_fee,
+                    admin_cost,
+                    t1_exp_moic,
+                    t2_exp_moic,
+                    t3_exp_moic,
+                    tier1_carry,
+                    tier2_carry,
+                    tier3_carry,
+                    target_ownership,
+                    expected_dilution,
+                    failure_rate,
+                    break_even_rate,
+                    high_return_rate,
+                ),
+            )
             conn.commit()
         st.success("Saved")
 
@@ -219,14 +316,29 @@ with tabs[1]:
 
         if st.form_submit_button("Add Deal"):
             with conn.cursor() as c:
-                c.execute("""
+                c.execute(
+                    """
                     insert into deals
                     (user_id, company, company_type, industry, entry_year, invested,
                      entry_valuation, exit_year, base_factor, downside_factor,
                      upside_factor, scenario)
                     values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                """, (user_id, company, company_type, industry, entry_year, invested,
-                      entry_val, exit_year, base, down, up, scenario))
+                """,
+                    (
+                        user_id,
+                        company,
+                        company_type,
+                        industry,
+                        entry_year,
+                        invested,
+                        entry_val,
+                        exit_year,
+                        base,
+                        down,
+                        up,
+                        scenario,
+                    ),
+                )
                 conn.commit()
             st.success("Deal added")
 
@@ -238,28 +350,97 @@ with tabs[1]:
         df["Ownership %"] = (df.invested / df["Post Money"]) * 100
 
         factor = df.apply(
-            lambda r: r.base_factor if r.scenario == "Base"
-            else r.downside_factor if r.scenario == "Downside"
-            else r.upside_factor,
-            axis=1
+            lambda r: (
+                r.base_factor
+                if r.scenario == "Base"
+                else r.downside_factor if r.scenario == "Downside" else r.upside_factor
+            ),
+            axis=1,
         )
 
         df["Exit Valuation"] = df["Post Money"] * factor
         df["Exit Value"] = df["Exit Valuation"] * (df["Ownership %"] / 100)
 
-        display_df = df.copy()
+        columns_to_show = [
+            "company",
+            "company_type",
+            "industry",
+            "entry_year",
+            "invested",
+            "entry_valuation",
+            "exit_year",
+            "scenario",
+            "Holding Period",
+            "Ownership %",
+            "Exit Valuation",
+            "Exit Value",
+        ]
+
+        display_df = df[columns_to_show].copy()
         for col in display_df.columns:
             if display_df[col].dtype != object:
                 display_df[col] = display_df[col].apply(fmt)
 
-        st.dataframe(display_df, use_container_width=True)
+        st.dataframe(
+            display_df,
+            use_container_width=True,
+            column_config={
+                "company": "Company",
+                "company_type": "Company Type",
+                "industry": "Industry",
+                "entry_year": st.column_config.DatetimeColumn(
+                    "Entry Year", format="YYYY"
+                ),
+                "invested": "Amount Invested ($)",
+                "entry_valuation": "Entry Valuation ($)",
+                "exit_year": st.column_config.DatetimeColumn(
+                    "Exit Year", format="YYYY"
+                ),
+                "Holding Period": "Holding Period (Years)",
+                "Ownership %": "Ownership (%)",
+                "Exit Valuation": "Exit Valuation ($)",
+                "Exit Value": "Exit Value ($)",
+            },
+        )
 
-        for _, r in df.iterrows():
-            if st.button(f"❌ Remove {r.company}", key=str(r.id)):
-                with conn.cursor() as c:
-                    c.execute("delete from deals where id = %s and user_id = %s", (r.id, user_id))
-                    conn.commit()
-                st.rerun()
+        st.divider()
+        st.subheader("Delete Deal")
+        
+        # Create a lookup using company name as display and deal_id as value
+        deal_options = df["company"].tolist()
+        
+        selected_deal = st.selectbox(
+            "Select a deal to delete",
+            options=deal_options,
+            key="deal_delete_select"
+        )
+
+        if selected_deal:
+            # Get the deal_id for the selected company
+            deal_id = df[df["company"] == selected_deal]["id"].iloc[0]
+            
+            st.warning(f"⚠️ You are about to delete **{selected_deal}**. This action cannot be undone.")
+
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if st.button("🗑️ Confirm Delete", key="btn_delete_confirm", type="secondary"):
+                    # Show confirmation dialog
+                    @st.dialog("Confirm Deletion", width="small")
+                    def confirm_delete():
+                        st.write(f"Are you sure you want to delete **{selected_deal}**?")
+                        st.write("This action cannot be undone.")
+                        
+                        col_yes, col_no = st.columns(2)
+                        with col_yes:
+                            if st.button("Yes, Delete", type="primary", use_container_width=True):
+                                delete_deal_from_db(deal_id)
+                                st.session_state.deal_deleted = True
+                                st.success("✅ Deal deleted successfully.")
+                                st.rerun()
+                    
+                    confirm_delete()
+
 
 # ------------------ DASHBOARD ------------------
 with tabs[2]:
@@ -275,17 +456,111 @@ with tabs[2]:
         c3.metric("MOIC", f"{fmt(moic)}x")
         c4.metric("IRR", f"{fmt(fund_irr * 100)}%" if fund_irr == fund_irr else "N/A")
         c5.metric("Total Deals", f"{len(df)}")
+        
+# ------------------ AGGREGATED EXITS ------------------
+with tabs[3]:
+    st.subheader("Aggregated Exit Scenarios")
+
+    if not df.empty:
+        # 1. Setup Constants & Base Calculations
+        total_invested = df.invested.sum()
+        base_gev = df["Exit Value"].sum()
+        
+        # Calculate fees based on your Admin Fee logic
+        admin_cost_val = (admin_cost / 100) * target_fund
+        total_fees = (admin_cost_val * investment_period) + admin_cost_val
+
+        st.metric("Total Invested Capital", f"${fmt(total_invested)}")
+
+        # 2. Define Scenarios with Bold Markdown formatting
+        # We use ** to make them bold in the column headers
+        scenarios = ["**Base Case**", "**Upside Case**", "**High Growth Case**"]
+        multipliers = [1.0, 1.5, 2.0]
+        
+        data = []
+
+        for scenario_name, mult in zip(scenarios, multipliers):
+            gev = base_gev * mult
+            profit_before_carry = gev - total_invested
+            gross_moic = gev / total_invested if total_invested > 0 else 0
+            
+            # Carry Tier Logic
+            if gross_moic < t2_exp_moic:
+                carry_pct = tier1_carry
+            elif gross_moic < t3_exp_moic:
+                carry_pct = tier2_carry
+            else:
+                carry_pct = tier3_carry
+            
+            carry_amt = max(0, profit_before_carry * (carry_pct / 100))
+            net_to_investors = gev - carry_amt - total_fees
+            real_moic = net_to_investors / total_invested if total_invested > 0 else 0
+            scenario_irr = irr(real_moic, exit_horizon)
+
+            data.append({
+                "Scenario": scenario_name,
+                "GEV": gev,
+                "Profit Before Carry": profit_before_carry,
+                "Gross MOIC": gross_moic,
+                "Carry %": carry_pct,
+                "Carry Amount": carry_amt,
+                "Total Fees": total_fees,
+                "Net to Investors": net_to_investors,
+                "Real MOIC": real_moic,
+                "IRR": scenario_irr
+            })
+
+        # 3. Transform Data for Display
+        metrics_labels = [
+            ("Gross Exit Value", "GEV", "${}"),
+            ("Profit Before Carry", "Profit Before Carry", "${}"),
+            ("Gross MOIC", "Gross MOIC", "{}x"),
+            ("Carry (%)", "Carry %", "{}%"),
+            ("Carry Amount", "Carry Amount", "${}"),
+            ("Total Fees", "Total Fees", "${}"),
+            ("Net to Investors", "Net to Investors", "${}"),
+            ("Real MOIC to Investors", "Real MOIC", "{}x"),
+            ("IRR", "IRR", "{}%")
+        ]
+
+        final_rows = []
+        for label, key, format_str in metrics_labels:
+            row = {"**Metric**": label} # Bold the metric column header too
+            for entry in data:
+                # Use the bolded scenario name as the key
+                s_name = entry["Scenario"]
+                val = entry[key]
+                
+                if "%" in format_str:
+                    row[s_name] = f"{fmt(val * 100 if key == 'IRR' else val)}%"
+                elif "x" in format_str:
+                    row[s_name] = f"{fmt(val)}x"
+                else:
+                    row[s_name] = f"${fmt(val)}"
+            final_rows.append(row)
+
+        exits_df = pd.DataFrame(final_rows)
+        
+        # 4. Use st.table for a static, clean "financial report" look
+        # st.table respects the Markdown bolding in the column headers
+        st.table(exits_df.set_index("**Metric**"))
+        
+    else:
+        st.info("Please add deals in the 'Deal Prognosis' tab to see aggregated exits.")
+    
 
 # ------------------ ADMIN FEE ------------------
-with tabs[3]:
-    admin_cost = 0.05 * target_fund
+with tabs[4]:
+    admin_cost = (admin_cost / 100) * target_fund
     operations_fee = admin_cost
     management_fee = admin_cost * investment_period
 
-    fee_df = pd.DataFrame({
-        "Fee Type": ["Admin Cost", "Operations Fee", "Management Fee"],
-        "Amount ($)": [admin_cost, operations_fee, management_fee]
-    })
+    fee_df = pd.DataFrame(
+        {
+            "Fee Type": ["Admin Cost", "Operations Fee", "Management Fee"],
+            "Amount ($)": [admin_cost, operations_fee, management_fee],
+        }
+    )
 
     fee_df["Amount ($)"] = fee_df["Amount ($)"].apply(fmt)
     st.table(fee_df)
