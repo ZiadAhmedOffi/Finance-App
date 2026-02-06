@@ -106,7 +106,7 @@ assumptions = pd.read_sql("""
 """, conn, params=(user_id,))
 
 if assumptions.empty:
-    investment_period, exit_horizon, min_ticket, max_ticket, target_fund, fund_life = (10, 5, 0.0, 0.0, 0.0, 10)
+    investment_period, exit_horizon, min_ticket, max_ticket, target_fund, fund_life, lockup_period, preferred_return, management_fee, admin_cost, t1_exp_moic, t2_exp_moic, t3_exp_moic, tier1_carry, tier2_carry, tier3_carry, target_ownership, expected_dilution, failure_rate, break_even_rate, high_return_rate = (10, 5, 0.0, 0.0, 0.0, 10, 3.0, 8.0, 2.0, 1.5, 2.5, 1.5, 1.25, 25.0, 25.0, 25.0, 75.0, 15.0, 30.0, 40.0, 35.0)
 else:
     r = assumptions.iloc[0]
     investment_period = r.investment_period
@@ -115,12 +115,25 @@ else:
     max_ticket = r.max_ticket
     target_fund = r.target_fund
     fund_life = r.actual_fund_life
+    lockup_period = r.lockup_period
+    preferred_return = r.preferred_return
+    management_fee = r.management_fee
+    admin_cost = r.admin_cost
+    t1_exp_moic = r.t1_exp_moic
+    t2_exp_moic = r.t2_exp_moic
+    t3_exp_moic = r.t3_exp_moic
+    tier1_carry = r.tier1_carry
+    tier2_carry = r.tier2_carry
+    tier3_carry = r.tier3_carry
+    target_ownership = r.target_ownership
+    expected_dilution = r.expected_dilution
+    failure_rate = r.failure_rate
+    break_even_rate = r.break_even_rate
+    high_return_rate = r.high_return_rate
 
 # ------------------ APP ------------------
 st.title("📊 Fund Financial Dashboard")
 tabs = st.tabs(["📌 Model Inputs", "💼 Deal Prognosis", "📈 Dashboard", "💰 Admin Fee"])
-
-st.write(st.secrets.keys())
 
 # ------------------ MODEL INPUTS ------------------
 with tabs[0]:
@@ -132,21 +145,51 @@ with tabs[0]:
     min_ticket = st.number_input("Minimum Ticket ($)", 0.0, value=min_ticket, step=10_000.0)
     max_ticket = st.number_input("Maximum Ticket ($)", 0.0, value=max_ticket, step=10_000.0)
     target_fund = st.number_input("Target Fund Size ($)", 0.0, value=target_fund, step=100_000.0)
+    lockup_period = st.number_input("Lockup Period (Years)", 1, 20, lockup_period)
+    preferred_return = st.number_input("Preferred Return (%)", 0.0, 100.0, preferred_return)
+    management_fee = st.number_input("Management Fee (%)", 0.0, 100.0, management_fee)
+    admin_cost = st.number_input("Admin Cost (%)", 0.0, 100.0, admin_cost)
+    t1_exp_moic = st.number_input("Top 1 Expected MOIC", 0.0, 20.0, t1_exp_moic)
+    t2_exp_moic = st.number_input("Top 2-5 Expected MOIC", 0.0, 20.0, t2_exp_moic)
+    t3_exp_moic = st.number_input("Top 6-20 Expected MOIC", 0.0, 20.0, t3_exp_moic)
+    tier1_carry = st.number_input("Tier 1 Carry (%)", 0.0, 100.0, tier1_carry)
+    tier2_carry = st.number_input("Tier 2 Carry (%)", 0.0, 100.0, tier2_carry)
+    tier3_carry = st.number_input("Tier 3 Carry (%)", 0.0, 100.0, tier3_carry)
+    target_ownership = st.number_input("Target Ownership (%)", 0.0, 100.0, target_ownership)
+    expected_dilution = st.number_input("Expected Dilution (%)", 0.0, 100.0, expected_dilution)
+    failure_rate = st.number_input("Failure Rate (%)", 0.0, 100.0, failure_rate)
+    break_even_rate = st.number_input("Break-even Rate (%)", 0.0, 100.0, break_even_rate)
+    high_return_rate = st.number_input("High Return Rate (%)", 0.0, 100.0, high_return_rate)
 
     if st.button("Save Assumptions"):
         with conn.cursor() as c:
             c.execute("""
                 insert into assumptions
-                (user_id, investment_period, exit_horizon, min_ticket, max_ticket, target_fund, actual_fund_life)
-                values (%s,%s,%s,%s,%s,%s,%s)
+                (user_id, investment_period, exit_horizon, min_ticket, max_ticket, target_fund, actual_fund_life, lockup_period, preferred_return, management_fee, admin_cost, t1_exp_moic, t2_exp_moic, t3_exp_moic, tier1_carry, tier2_carry, tier3_carry, target_ownership, expected_dilution, failure_rate, break_even_rate, high_return_rate)
+                values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 on conflict (user_id) do update set
                     investment_period = excluded.investment_period,
                     exit_horizon = excluded.exit_horizon,
                     min_ticket = excluded.min_ticket,
                     max_ticket = excluded.max_ticket,
                     target_fund = excluded.target_fund,
-                    actual_fund_life = excluded.actual_fund_life
-            """, (user_id, investment_period, exit_horizon, min_ticket, max_ticket, target_fund, fund_life))
+                    actual_fund_life = excluded.actual_fund_life,
+                    lockup_period = excluded.lockup_period,
+                    preferred_return = excluded.preferred_return,
+                    management_fee = excluded.management_fee,
+                    admin_cost = excluded.admin_cost,
+                    t1_exp_moic = excluded.t1_exp_moic,
+                    t2_exp_moic = excluded.t2_exp_moic,
+                    t3_exp_moic = excluded.t3_exp_moic,
+                    tier1_carry = excluded.tier1_carry,
+                    tier2_carry = excluded.tier2_carry,
+                    tier3_carry = excluded.tier3_carry,
+                    target_ownership = excluded.target_ownership,
+                    expected_dilution = excluded.expected_dilution,
+                    failure_rate = excluded.failure_rate,
+                    break_even_rate = excluded.break_even_rate,
+                    high_return_rate = excluded.high_return_rate
+            """, (user_id, investment_period, exit_horizon, min_ticket, max_ticket, target_fund, fund_life, lockup_period, preferred_return, management_fee, admin_cost, t1_exp_moic, t2_exp_moic, t3_exp_moic, tier1_carry, tier2_carry, tier3_carry, target_ownership, expected_dilution, failure_rate, break_even_rate, high_return_rate))
             conn.commit()
         st.success("Saved")
 
