@@ -4,6 +4,8 @@ import numpy as np
 import math
 import psycopg2
 from supabase import create_client
+import plotly.graph_objects as go
+import plotly.express as px
 
 # ------------------ CONFIG ------------------
 st.set_page_config(page_title="Fund Financial Model", page_icon="📊", layout="wide")
@@ -376,10 +378,12 @@ with tabs[1]:
             "Exit Value",
         ]
 
+        # 1. Select the columns
         display_df = df[columns_to_show].copy()
-        for col in display_df.columns:
-            if display_df[col].dtype != object:
-                display_df[col] = display_df[col].apply(fmt)
+
+        # 2. DO NOT apply fmt to the whole dataframe. 
+        # We will only apply it to specific financial columns if needed, 
+        # but it's better to let Streamlit's column_config handle it.
 
         st.dataframe(
             display_df,
@@ -388,18 +392,37 @@ with tabs[1]:
                 "company": "Company",
                 "company_type": "Company Type",
                 "industry": "Industry",
-                "entry_year": st.column_config.DatetimeColumn(
-                    "Entry Year", format="YYYY"
+                # Use %d to show the year as a plain integer without commas
+                "entry_year": st.column_config.NumberColumn(        
+            "Entry Year", 
+            format="%d"
+        ),
+                # Use a dollar format for money columns
+                "invested": st.column_config.NumberColumn(
+                    "Amount Invested ($)", 
+                    format="dollar"
                 ),
-                "invested": "Amount Invested ($)",
-                "entry_valuation": "Entry Valuation ($)",
-                "exit_year": st.column_config.DatetimeColumn(
-                    "Exit Year", format="YYYY"
-                ),
+                "entry_valuation": st.column_config.NumberColumn(
+            "Entry Valuation ($)", 
+            format="dollar"
+        ),
+                "exit_year": st.column_config.NumberColumn(
+            "Exit Year", 
+            format="%d"
+        ),
                 "Holding Period": "Holding Period (Years)",
-                "Ownership %": "Ownership (%)",
-                "Exit Valuation": "Exit Valuation ($)",
-                "Exit Value": "Exit Value ($)",
+                "Ownership %": st.column_config.NumberColumn(
+            "Ownership (%)", 
+            format="%.2f%%"
+        ),
+                "Exit Valuation": st.column_config.NumberColumn(
+            "Exit Valuation ($)", 
+            format="dollar"
+        ),
+                "Exit Value": st.column_config.NumberColumn(
+            "Exit Value ($)", 
+            format="dollar"
+        ),
             },
         )
 
@@ -440,6 +463,125 @@ with tabs[1]:
                                 st.rerun()
                     
                     confirm_delete()
+
+    st.divider()
+    st.subheader("Deal Analytics")
+    
+    # Row 1: Pie Charts
+    col_pie1, col_pie2 = st.columns(2)
+        
+    with col_pie1:
+        # 1. Company Types by Number of Deals
+        type_counts = df['company_type'].value_counts().reset_index()
+        fig1 = px.pie(type_counts, values='count', names='company_type', 
+                      title="Deals by Company Type (%)", hole=0.4)
+        st.plotly_chart(fig1, use_container_width=True)
+        
+    with col_pie2:
+        # 2. Company Types by Capital Invested
+        type_cap = df.groupby('company_type')['invested'].sum().reset_index()
+        fig2 = px.pie(type_cap, values='invested', names='company_type', 
+                      title="Capital Invested by Company Type (%)", hole=0.4)
+        st.plotly_chart(fig2, use_container_width=True)
+    # 3. Investment Velocity (Split into two columns)
+    st.write("#### Investment Velocity")
+    yearly_stats = df.groupby('entry_year').agg({'invested': 'sum', 'id': 'count'}).reset_index()
+    yearly_stats = yearly_stats.sort_values('entry_year')
+    yearly_stats['cum_invested'] = yearly_stats['invested'].cumsum()
+    yearly_stats['cum_deals'] = yearly_stats['id'].cumsum()
+
+    # Create two columns for the Velocity metrics
+    col_vel1, col_vel2 = st.columns(2)
+
+    with col_vel1:
+        # --- Graph 3a: Deal Count Velocity ---
+        fig_deals = go.Figure()
+        fig_deals.add_trace(go.Bar(
+            x=yearly_stats['entry_year'], 
+            y=yearly_stats['id'], 
+            name="Deals per Year", 
+            marker_color='#EF553B'
+        ))
+        fig_deals.add_trace(go.Scatter(
+            x=yearly_stats['entry_year'], 
+            y=yearly_stats['cum_deals'], 
+            name="Total Deals (Cum)", 
+            line=dict(color='white', width=3, dash='dash')
+        ))
+        fig_deals.update_layout(
+            title="Deal Velocity (Count)",
+            xaxis=dict(type='category', title="Year"),
+            yaxis=dict(title="Number of Deals"),
+            legend=dict(orientation="h", y=-0.2),
+            margin=dict(t=50, b=50, l=25, r=25)
+        )
+        st.plotly_chart(fig_deals, use_container_width=True)
+    with col_vel2:
+        # --- Graph 3b: Capital Deployment Velocity ---
+        fig_inv = go.Figure()
+        fig_inv.add_trace(go.Bar(
+            x=yearly_stats['entry_year'], 
+            y=yearly_stats['invested'], 
+            name="Invested per Year", 
+            marker_color='#636EFA'
+        ))
+        fig_inv.add_trace(go.Scatter(
+            x=yearly_stats['entry_year'], 
+            y=yearly_stats['cum_invested'], 
+            name="Total Invested (Cum)", 
+            line=dict(color='gold', width=3)
+        ))
+        fig_inv.update_layout(
+            title="Capital Deployment ($)",
+            xaxis=dict(type='category', title="Year"),
+            yaxis=dict(title="Amount ($)"),
+            legend=dict(orientation="h", y=-0.2),
+            margin=dict(t=50, b=50, l=25, r=25)
+        )
+        st.plotly_chart(fig_inv, use_container_width=True)
+
+    # 4. Appreciation Projection (REVISED)
+    st.write("#### Capital Appreciation (Linear Projection)")
+    total_gev = df["Exit Value"].sum()
+        
+    if not yearly_stats.empty:
+        start_val = yearly_stats['cum_invested'].iloc[0]
+        years = sorted(df['entry_year'].unique().tolist())
+            
+        if len(years) > 1:
+            steps = len(years)
+            appreciation_line = np.linspace(start_val, total_gev, steps)
+            
+            fig4 = go.Figure()
+            # Removed fill='tozeroy' to make it a simple line
+            fig4.add_trace(go.Scatter(
+                x=years, 
+                y=yearly_stats['cum_invested'], 
+                name="Cumulative Invested",
+                mode='lines+markers',
+                line=dict(color='#00CC96', width=3)
+            ))
+            fig4.add_trace(go.Scatter(
+                x=years, 
+                y=appreciation_line, 
+                name="Appreciation Projection", 
+                line=dict(color='#AB63FA', width=4, dash='dot')
+            ))
+            
+            fig4.update_layout(
+                title="Investment Basis vs. Projected Exit Value", 
+                xaxis=dict(type='category'),
+                yaxis_title="Value ($)",
+                legend=dict(orientation="h", y=-0.2)
+            )
+            st.plotly_chart(fig4, use_container_width=True)
+    # 5. Holding Period (Horizontal)
+    st.write("#### Portfolio Longevity")
+    df_hp = df.sort_values('Holding Period', ascending=True) # Ascending for correct top-down bar chart
+    fig5 = px.bar(df_hp, x='Holding Period', y='company', orientation='h', 
+                  title="Holding Period by Company (Years)",
+                  labels={'company': 'Company', 'Holding Period': 'Years'})
+    st.plotly_chart(fig5, use_container_width=True)
 
 
 # ------------------ DASHBOARD ------------------
@@ -547,6 +689,33 @@ with tabs[3]:
         
     else:
         st.info("Please add deals in the 'Deal Prognosis' tab to see aggregated exits.")
+
+    # 6. Combined Scenario Analysis Graph
+    st.divider()
+    st.subheader("Scenario Comparison")
+        
+    scenario_labels = [d["Scenario"].replace("**", "") for d in data]
+    gevs = [d["GEV"] for d in data]
+    invested_vals = [total_invested] * 3
+    irrs = [d["IRR"] * 100 for d in data] # Convert to percentage
+
+    fig6 = go.Figure()
+    # Columns for Investment and GEV
+    fig6.add_trace(go.Bar(x=scenario_labels, y=invested_vals, name="Invested Capital", marker_color='lightslategray'))
+    fig6.add_trace(go.Bar(x=scenario_labels, y=gevs, name="Gross Exit Value", marker_color='royalblue'))
+    
+    # Line for IRR
+    fig6.add_trace(go.Scatter(x=scenario_labels, y=irrs, name="IRR (%)", yaxis='y2', 
+                              line=dict(color='firebrick', width=4), mode='lines+markers+text',
+                              text=[f"{v:.1f}%" for v in irrs], textposition="top center"))
+    fig6.update_layout(
+        title="Scenario Outcome: Capital vs. Returns",
+        yaxis=dict(title="Amount ($)"),
+        yaxis2=dict(title="IRR (%)", overlaying='y', side='right', range=[0, max(irrs)*1.2 if irrs else 100]),
+        barmode='group',
+        legend=dict(orientation="h", y=-0.2)
+    )
+    st.plotly_chart(fig6, use_container_width=True)
     
 
 # ------------------ ADMIN FEE ------------------
