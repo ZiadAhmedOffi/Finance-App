@@ -4,3 +4,4 @@ numpy
 bcrypt
 supabase
 psycopg2-binary
+plotly
