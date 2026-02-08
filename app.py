@@ -193,7 +193,7 @@ def delete_deal_from_db(deal_id):
 
 # ------------------ APP ------------------
 st.title("📊 Fund Financial Dashboard")
-tabs = st.tabs(["📌 Model Inputs", "💼 Deal Prognosis", "📈 Dashboard", "� Aggregated Exits" ,"💰 Admin Fee"])
+tabs = st.tabs(["📌 Model Inputs", "💼 Deal Prognosis", "📈 Dashboard", "💲 Aggregated Exits" ,"💰 Admin Fee"])
 
 # ------------------ MODEL INPUTS ------------------
 with tabs[0]:
@@ -399,6 +399,7 @@ with tabs[1]:
                 "company": "Company",
                 "company_type": "Company Type",
                 "industry": "Industry",
+                "scenario": "Scenario",
                 # Use %d to show the year as a plain integer without commas
                 "entry_year": st.column_config.NumberColumn(        
             "Entry Year", 
