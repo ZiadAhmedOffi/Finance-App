@@ -51,31 +51,36 @@ if "session" not in st.session_state:
 
 
 def login_ui():
-    st.title("🔐 Login")
+    # 1. Create three columns with a wide center column
+    left_spacer, center_col, right_spacer = st.columns([1, 2, 1])
 
-    email = st.text_input("Email")
-    password = st.text_input("Password", type="password")
+    with center_col:
+        # 2. Use HTML to center the title text
+        st.markdown("<h1 style='text-align: center;'>🔐 Login</h1>", unsafe_allow_html=True)
 
-    col1, col2 = st.columns(2)
+        email = st.text_input("Email")
+        password = st.text_input("Password", type="password")
 
-    with col1:
-        if st.button("Login"):
-            res = supabase.auth.sign_in_with_password(
-                {"email": email, "password": password}
-            )
-            if res.session:
-                st.session_state.session = res.session
-                st.rerun()
-            else:
-                st.error("Invalid credentials")
+        col1, col2 = st.columns(2)
 
-    with col2:
-        if st.button("Create Account"):
-            res = supabase.auth.sign_up({"email": email, "password": password})
-            if res.user:
-                st.success("Account created. Please log in.")
-            else:
-                st.error("Signup failed")
+        with col1:
+            if st.button("Login", use_container_width=True):
+                res = supabase.auth.sign_in_with_password(
+                    {"email": email, "password": password}
+                )
+                if res.session:
+                    st.session_state.session = res.session
+                    st.rerun()
+                else:
+                    st.error("Invalid credentials")
+
+        with col2:
+            if st.button("Create Account", use_container_width=True):
+                res = supabase.auth.sign_up({"email": email, "password": password})
+                if res.user:
+                    st.success("Account created. Please log in.")
+                else:
+                    st.error("Signup failed")
 
 
 if not st.session_state.session:
@@ -192,49 +197,56 @@ tabs = st.tabs(["📌 Model Inputs", "💼 Deal Prognosis", "📈 Dashboard", "�
 
 # ------------------ MODEL INPUTS ------------------
 with tabs[0]:
-    st.subheader("Model Inputs")
+    st.subheader("Model Assumptions")
 
-    investment_period = st.number_input(
-        "Investment Period (Years)", 1, 20, investment_period
-    )
-    fund_life = st.number_input("Fund Life (Years)", 1, 20, fund_life)
-    exit_horizon = st.number_input("Exit Horizon (Years)", 1, 20, exit_horizon)
-    min_ticket = st.number_input(
-        "Minimum Ticket ($)", 0.0, value=min_ticket, step=10_000.0
-    )
-    max_ticket = st.number_input(
-        "Maximum Ticket ($)", 0.0, value=max_ticket, step=10_000.0
-    )
-    target_fund = st.number_input(
-        "Target Fund Size ($)", 0.0, value=target_fund, step=100_000.0
-    )
-    lockup_period = st.number_input("Lockup Period (Years)", 1, 20, lockup_period)
-    preferred_return = st.number_input(
-        "Preferred Return (%)", 0.0, 100.0, preferred_return
-    )
-    management_fee = st.number_input("Management Fee (%)", 0.0, 100.0, management_fee)
-    admin_cost = st.number_input("Admin Cost (%)", 0.0, 100.0, admin_cost)
-    t1_exp_moic = st.number_input("Top 1 Expected MOIC", 0.0, 20.0, t1_exp_moic)
-    t2_exp_moic = st.number_input("Top 2-5 Expected MOIC", 0.0, 20.0, t2_exp_moic)
-    t3_exp_moic = st.number_input("Top 6-20 Expected MOIC", 0.0, 20.0, t3_exp_moic)
-    tier1_carry = st.number_input("Tier 1 Carry (%)", 0.0, 100.0, tier1_carry)
-    tier2_carry = st.number_input("Tier 2 Carry (%)", 0.0, 100.0, tier2_carry)
-    tier3_carry = st.number_input("Tier 3 Carry (%)", 0.0, 100.0, tier3_carry)
-    target_ownership = st.number_input(
-        "Target Ownership (%)", 0.0, 100.0, target_ownership
-    )
-    expected_dilution = st.number_input(
-        "Expected Dilution (%)", 0.0, 100.0, expected_dilution
-    )
-    failure_rate = st.number_input("Failure Rate (%)", 0.0, 100.0, failure_rate)
-    break_even_rate = st.number_input(
-        "Break-even Rate (%)", 0.0, 100.0, break_even_rate
-    )
-    high_return_rate = st.number_input(
-        "High Return Rate (%)", 0.0, 100.0, high_return_rate
-    )
+    # Split inputs into two columns
+    col_input1, col_input2 = st.columns(2)
 
-    if st.button("Save Assumptions"):
+    with col_input1:
+        investment_period = st.number_input(
+            "Investment Period (Years)", 1, 20, investment_period
+        )
+        fund_life = st.number_input("Fund Life (Years)", 1, 20, fund_life)
+        exit_horizon = st.number_input("Exit Horizon (Years)", 1, 20, exit_horizon)
+        min_ticket = st.number_input(
+            "Minimum Ticket ($)", 0.0, value=min_ticket, step=10_000.0
+        )
+        max_ticket = st.number_input(
+            "Maximum Ticket ($)", 0.0, value=max_ticket, step=10_000.0
+        )
+        target_fund = st.number_input(
+            "Target Fund Size ($)", 0.0, value=target_fund, step=100_000.0
+        )
+        lockup_period = st.number_input("Lockup Period (Years)", 1, 20, lockup_period)
+        preferred_return = st.number_input(
+            "Preferred Return (%)", 0.0, 100.0, preferred_return
+        )
+        management_fee = st.number_input("Management Fee (%)", 0.0, 100.0, management_fee)
+        admin_cost = st.number_input("Admin Cost (%)", 0.0, 100.0, admin_cost)
+        target_ownership = st.number_input(
+            "Target Ownership (%)", 0.0, 100.0, target_ownership
+        )
+
+    with col_input2:
+        t1_exp_moic = st.number_input("Top 1 Expected MOIC", 0.0, 20.0, t1_exp_moic)
+        t2_exp_moic = st.number_input("Top 2-5 Expected MOIC", 0.0, 20.0, t2_exp_moic)
+        t3_exp_moic = st.number_input("Top 6-20 Expected MOIC", 0.0, 20.0, t3_exp_moic)
+        tier1_carry = st.number_input("Tier 1 Carry (%)", 0.0, 100.0, tier1_carry)
+        tier2_carry = st.number_input("Tier 2 Carry (%)", 0.0, 100.0, tier2_carry)
+        tier3_carry = st.number_input("Tier 3 Carry (%)", 0.0, 100.0, tier3_carry)
+        expected_dilution = st.number_input(
+            "Expected Dilution (%)", 0.0, 100.0, expected_dilution
+        )
+        failure_rate = st.number_input("Failure Rate (%)", 0.0, 100.0, failure_rate)
+        break_even_rate = st.number_input(
+            "Break-even Rate (%)", 0.0, 100.0, break_even_rate
+        )
+        high_return_rate = st.number_input(
+            "High Return Rate (%)", 0.0, 100.0, high_return_rate
+        )
+
+    # Save button centered below columns
+    if st.button("💾 Save Assumptions", use_container_width=True):
         with conn.cursor() as c:
             c.execute(
                 """
@@ -265,58 +277,52 @@ with tabs[0]:
                     high_return_rate = excluded.high_return_rate
             """,
                 (
-                    user_id,
-                    investment_period,
-                    exit_horizon,
-                    min_ticket,
-                    max_ticket,
-                    target_fund,
-                    fund_life,
-                    lockup_period,
-                    preferred_return,
-                    management_fee,
-                    admin_cost,
-                    t1_exp_moic,
-                    t2_exp_moic,
-                    t3_exp_moic,
-                    tier1_carry,
-                    tier2_carry,
-                    tier3_carry,
-                    target_ownership,
-                    expected_dilution,
-                    failure_rate,
-                    break_even_rate,
-                    high_return_rate,
+                    user_id, investment_period, exit_horizon, min_ticket, max_ticket,
+                    target_fund, fund_life, lockup_period, preferred_return,
+                    management_fee, admin_cost, t1_exp_moic, t2_exp_moic,
+                    t3_exp_moic, tier1_carry, tier2_carry, tier3_carry,
+                    target_ownership, expected_dilution, failure_rate,
+                    break_even_rate, high_return_rate,
                 ),
             )
             conn.commit()
-        st.success("Saved")
+        st.success("Assumptions saved successfully!")
 
+    st.divider()
+
+    # Metrics section
     avg_ticket = (min_ticket + max_ticket) / 2 if max_ticket > 0 else 0
     expected_investors = math.ceil(target_fund / avg_ticket) if avg_ticket > 0 else 0
 
-    c1, c2 = st.columns(2)
-    c1.metric("Average Ticket", f"${fmt(avg_ticket)}")
-    c2.metric("Expected Investors", f"{expected_investors:,}")
+    m1, m2 = st.columns(2)
+    m1.metric("Average Ticket", f"${fmt(avg_ticket)}")
+    m2.metric("Expected Investors", f"{expected_investors:,}")
 
 # ------------------ DEAL PROGNOSIS ------------------
 with tabs[1]:
     st.subheader("Add Deal")
 
     with st.form("deal"):
-        company = st.text_input("Company")
-        company_type = st.text_input("Company Type")
-        industry = st.text_input("Industry")
-        entry_year = st.number_input("Entry Year", 2000, 2100, 2024)
-        invested = st.number_input("Amount Invested ($)", 0.0)
-        entry_val = st.number_input("Entry Valuation ($)", 0.0)
-        exit_year = st.number_input("Exit Year", 2000, 2100, entry_year + exit_horizon)
-        base = st.number_input("Base Factor", 0.0, 100.0, 3.0)
-        down = st.number_input("Downside Factor", 0.0, 100.0, 1.5)
-        up = st.number_input("Upside Factor", 0.0, 100.0, 5.0)
-        scenario = st.selectbox("Scenario", ["Base", "Downside", "Upside"])
+        # Create two columns for the input fields
+        col_deal1, col_deal2 = st.columns(2)
 
-        if st.form_submit_button("Add Deal"):
+        with col_deal1:
+            company = st.text_input("Company")
+            company_type = st.text_input("Company Type")
+            industry = st.text_input("Industry")
+            entry_year = st.number_input("Entry Year", 2000, 2100, 2024)
+            invested = st.number_input("Amount Invested ($)", 0.0)
+            entry_val = st.number_input("Entry Valuation ($)", 0.0)
+
+        with col_deal2:
+            exit_year = st.number_input("Exit Year", 2000, 2100, entry_year + exit_horizon)
+            base = st.number_input("Base Factor", 0.0, 100.0, 3.0)
+            down = st.number_input("Downside Factor", 0.0, 100.0, 1.5)
+            up = st.number_input("Upside Factor", 0.0, 100.0, 5.0)
+            scenario = st.selectbox("Scenario", ["Base", "Downside", "Upside"])
+
+        # The submit button stays outside the columns but inside the form
+        if st.form_submit_button("Add Deal", use_container_width=True):
             with conn.cursor() as c:
                 c.execute(
                     """
@@ -384,6 +390,7 @@ with tabs[1]:
         # 2. DO NOT apply fmt to the whole dataframe. 
         # We will only apply it to specific financial columns if needed, 
         # but it's better to let Streamlit's column_config handle it.
+        display_df.index += 1  # Start index at 1 for better readability
 
         st.dataframe(
             display_df,
@@ -592,7 +599,8 @@ with tabs[2]:
         moic = exit_val / invested if invested > 0 else 0
         fund_irr = irr(moic, exit_horizon)
 
-        c1, c2, c3, c4, c5 = st.columns(5)
+        c1, c2 = st.columns(2)
+        c3, c4, c5 = st.columns(3)
         c1.metric("Total Invested", f"${fmt(invested)}")
         c2.metric("Gross Exit Value", f"${fmt(exit_val)}")
         c3.metric("MOIC", f"{fmt(moic)}x")
@@ -732,4 +740,5 @@ with tabs[4]:
     )
 
     fee_df["Amount ($)"] = fee_df["Amount ($)"].apply(fmt)
+    fee_df.index += 1  # Start index at 1 for better readability
     st.table(fee_df)
