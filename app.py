@@ -542,7 +542,7 @@ with tabs[2]:
         with cv1:
             fig_deals = go.Figure()
             fig_deals.add_trace(go.Bar(x=yearly_stats['entry_year'], y=yearly_stats['id'], name="Deals per Year", marker_color='#EF553B'))
-            fig_deals.add_trace(go.Scatter(x=yearly_stats['entry_year'], y=yearly_stats['cum_deals'], name="Total Deals (Cum)", line=dict(color='white', width=3, dash='dash')))
+            fig_deals.add_trace(go.Scatter(x=yearly_stats['entry_year'], y=yearly_stats['cum_deals'], name="Total Deals (Cum)", line=dict(width=3, dash='dash')))
             st.plotly_chart(fig_deals, use_container_width=True)
         with cv2:
             fig_inv = go.Figure()
