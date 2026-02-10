@@ -60,6 +60,11 @@ def irr(moic, exit_horizon):
         return np.nan
     return (moic ** (1 / exit_horizon)) - 1
 
+def py(v):
+    if isinstance(v, (np.integer, np.floating)):
+        return v.item()
+    return v
+
 # ------------------ SUPABASE ------------------
 supabase = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_ANON_KEY"])
 conn = psycopg2.connect(st.secrets["SUPABASE_DB_URL"], sslmode="require")
@@ -155,7 +160,48 @@ with tabs[0]:
 
         if st.button("💾 Save Assumptions", use_container_width=True):
             with conn.cursor() as c:
-                c.execute("insert into assumptions (user_id, investment_period, exit_horizon, min_ticket, max_ticket, target_fund, actual_fund_life, lockup_period, preferred_return, management_fee, admin_cost, t1_exp_moic, t2_exp_moic, t3_exp_moic, tier1_carry, tier2_carry, tier3_carry, target_ownership, expected_dilution, failure_rate, break_even_rate, high_return_rate) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) on conflict (user_id) do update set investment_period=excluded.investment_period, exit_horizon=excluded.exit_horizon, min_ticket=excluded.min_ticket, max_ticket=excluded.max_ticket, target_fund=excluded.target_fund, actual_fund_life=excluded.actual_fund_life, lockup_period=excluded.lockup_period, preferred_return=excluded.preferred_return, management_fee=excluded.management_fee, admin_cost=excluded.admin_cost, t1_exp_moic=excluded.t1_exp_moic, t2_exp_moic=excluded.t2_exp_moic, t3_exp_moic=excluded.t3_exp_moic, tier1_carry=excluded.tier1_carry, tier2_carry=excluded.tier2_carry, tier3_carry=excluded.tier3_carry, target_ownership=excluded.target_ownership, expected_dilution=excluded.expected_dilution, failure_rate=excluded.failure_rate, break_even_rate=excluded.break_even_rate, high_return_rate=excluded.high_return_rate", (user_id, investment_period, exit_horizon, min_ticket, max_ticket, target_fund, fund_life, lockup_period, preferred_return, management_fee, admin_cost, t1_exp_moic, t2_exp_moic, t3_exp_moic, tier1_carry, tier2_carry, tier3_carry, target_ownership, expected_dilution, failure_rate, break_even_rate, high_return_rate))
+                c.execute(
+                    """
+                    INSERT INTO assumptions (
+                        user_id, investment_period, exit_horizon, min_ticket, max_ticket,
+                        target_fund, actual_fund_life, lockup_period, preferred_return,
+                        management_fee, admin_cost, t1_exp_moic, t2_exp_moic, t3_exp_moic,
+                        tier1_carry, tier2_carry, tier3_carry, target_ownership,
+                        expected_dilution, failure_rate, break_even_rate, high_return_rate
+                    )
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    ON CONFLICT (user_id) DO UPDATE SET
+                        investment_period = EXCLUDED.investment_period,
+                        exit_horizon = EXCLUDED.exit_horizon,
+                        min_ticket = EXCLUDED.min_ticket,
+                        max_ticket = EXCLUDED.max_ticket,
+                        target_fund = EXCLUDED.target_fund,
+                        actual_fund_life = EXCLUDED.actual_fund_life,
+                        lockup_period = EXCLUDED.lockup_period,
+                        preferred_return = EXCLUDED.preferred_return,
+                        management_fee = EXCLUDED.management_fee,
+                        admin_cost = EXCLUDED.admin_cost,
+                        t1_exp_moic = EXCLUDED.t1_exp_moic,
+                        t2_exp_moic = EXCLUDED.t2_exp_moic,
+                        t3_exp_moic = EXCLUDED.t3_exp_moic,
+                        tier1_carry = EXCLUDED.tier1_carry,
+                        tier2_carry = EXCLUDED.tier2_carry,
+                        tier3_carry = EXCLUDED.tier3_carry,
+                        target_ownership = EXCLUDED.target_ownership,
+                        expected_dilution = EXCLUDED.expected_dilution,
+                        failure_rate = EXCLUDED.failure_rate,
+                        break_even_rate = EXCLUDED.break_even_rate,
+                        high_return_rate = EXCLUDED.high_return_rate
+                    """,
+                    tuple(map(py, (
+                        user_id, investment_period, exit_horizon, min_ticket, max_ticket,
+                        target_fund, fund_life, lockup_period, preferred_return,
+                        management_fee, admin_cost, t1_exp_moic, t2_exp_moic, t3_exp_moic,
+                        tier1_carry, tier2_carry, tier3_carry, target_ownership,
+                        expected_dilution, failure_rate, break_even_rate, high_return_rate
+                    )))
+                )
+
                 conn.commit()
             st.success("Assumptions saved successfully!")
 
@@ -333,7 +379,8 @@ with tabs[2]:
     if not df.empty:
         invested, exit_val = df.invested.sum(), df["Exit Value"].sum()
         moic = exit_val / invested if invested > 0 else 0
-        fund_irr = irr(moic, exit_horizon)
+        avg_holding_period = df["Holding Period"].mean()
+        fund_irr = irr(moic, avg_holding_period) if avg_holding_period > 0 else np.nan
         c1, c2 = st.columns(2)
         c3, c4, c5 = st.columns(3)
         c1.metric("Total Invested", f"${fmt(invested)}")
@@ -341,6 +388,152 @@ with tabs[2]:
         c3.metric("MOIC", fmt(moic, is_moic=True))
         c4.metric("IRR", fmt(fund_irr * 100, is_pct=True) if not pd.isna(fund_irr) else "N/A")
         c5.metric("Total Deals", f"{len(df)}")
+
+        st.write("#### Capital Growth Breakdown")
+        if not df.empty:
+            # 1. Prepare Year Range and IRR logic
+            start_year = int(df['entry_year'].min())
+            end_year = pd.Timestamp.now().year
+            years = list(range(start_year, end_year + 1))
+            
+            total_inv_calc = df.invested.sum()
+            total_exit_calc = df["Exit Value"].sum()
+            moic_calc = total_exit_calc / total_inv_calc if total_inv_calc > 0 else 0
+            current_irr = fund_irr
+
+            # 2. Calculate the Table Data
+            table_data = []
+            current_total = 0
+            
+            for i, yr in enumerate(years):
+                yr_injection = df[df['entry_year'] == yr]['invested'].sum()
+                yr_appreciation = current_total * current_irr if i > 0 else 0
+                
+                # Update running total for the end of the year
+                current_total += (yr_injection + yr_appreciation)
+                
+                table_data.append({
+                    "Year": yr,
+                    "Capital Injection ($)": yr_injection,
+                    "Capital Appreciation ($)": yr_appreciation,
+                    "Total Portfolio Value ($)": current_total
+                })
+
+            # 3. Create DataFrame and Format
+            growth_df = pd.DataFrame(table_data)
+            
+            # Apply standard comma formatting for financial columns
+            # We use a helper similar to your existing 'fmt' but specifically for table display
+            def table_fmt(val):
+                return f"${val:,.0f}"
+
+            formatted_df = growth_df.copy()
+            formatted_df["Capital Injection ($)"] = formatted_df["Capital Injection ($)"].apply(table_fmt)
+            formatted_df["Capital Appreciation ($)"] = formatted_df["Capital Appreciation ($)"].apply(table_fmt)
+            formatted_df["Total Portfolio Value ($)"] = formatted_df["Total Portfolio Value ($)"].apply(table_fmt)
+
+            # 4. Display the Table
+            # Use st.dataframe for a scrollable table or st.table for a static report look
+            st.table(formatted_df.set_index("Year"))
+        else:
+            st.info("Add deals to see the growth breakdown.")
+
+        # Display the Waterfall Graph
+        if not df.empty:
+            # 1. Calculation Logic
+            start_year = int(df['entry_year'].min())
+            end_year = pd.Timestamp.now().year
+            years = list(range(start_year, end_year))
+            
+            total_inv_calc = df.invested.sum()
+            total_exit_calc = df["Exit Value"].sum()
+            moic_calc = total_exit_calc / total_inv_calc if total_inv_calc > 0 else 0
+            current_irr = fund_irr
+
+            injections, appreciations, bases, total_values = [], [], [], []
+            current_total = 0
+            
+            for i, yr in enumerate(years):
+                yr_injection = df[df['entry_year'] == yr]['invested'].sum()
+                yr_appreciation = current_total * current_irr if i > 0 else 0
+                
+                bases.append(current_total)
+                injections.append(yr_injection)
+                appreciations.append(yr_appreciation)
+                
+                current_total += (yr_injection + yr_appreciation)
+                total_values.append(current_total)
+
+            # 2. Plotting
+            fig_candle = go.Figure()
+
+            # Capital Injection Bar
+            fig_candle.add_trace(go.Bar(
+                x=years, y=injections, base=bases,
+                name="Capital Injection", marker_color='#636EFA',
+                hovertemplate="Year: %{x}<br>Injection: $%{y:,.0f}<extra></extra>"
+            ))
+
+            # Capital Appreciation Bar
+            app_bases = [b + i for b, i in zip(bases, injections)]
+            fig_candle.add_trace(go.Bar(
+                x=years, y=appreciations, base=app_bases,
+                name="Capital Appreciation", marker_color='#00CC96',
+                hovertemplate="Year: %{x}<br>Appreciation: $%{y:,.0f}<extra></extra>"
+            ))
+
+            # NEW: Connector Lines (Horizontal steps between columns)
+            connector_x = []
+            connector_y = []
+            for i in range(len(years) - 1):
+                # Create a line segment from the end of year i to the start of year i+1
+                connector_x.extend([years[i], years[i+1], None])
+                connector_y.extend([total_values[i], total_values[i], None])
+
+            fig_candle.add_trace(go.Scatter(
+                x=connector_x,
+                y=connector_y,
+                mode='lines',
+                # Changed from white/light gray to a solid medium gray for theme compatibility
+                line=dict(color='#888888', width=1.5, dash='dot'), 
+                name="Growth Path",
+                hoverinfo='skip',
+                showlegend=False
+            ))
+
+            # Total Value Labels at the top
+            fig_candle.add_trace(go.Scatter(
+                x=years,
+                y=total_values,
+                mode='text',
+                text=[f"${v:,.0f}" for v in total_values],
+                textposition='top center',
+                textfont=dict(size=13),
+                showlegend=False,
+                cliponaxis=False 
+            ))
+
+            # 3. Layout Adjustments
+            fig_candle.update_layout(
+                height=900,  # This forces the double-height layout
+                title="Annual Portfolio Value Expansion",
+                barmode='stack',
+                xaxis=dict(type='category', title="Year"),
+                yaxis=dict(
+                    side='right',
+                    title="Total Capital ($)",
+                    tickformat="$,.0f",
+                    # Visible grid lines for both themes
+                    gridcolor='rgba(136, 136, 136, 0.4)', 
+                    zerolinecolor='rgba(136, 136, 136, 0.6)'
+                ),
+                legend=dict(orientation="h", y=-0.1),
+                margin=dict(t=80, r=50, b=100),
+                paper_bgcolor='rgba(0,0,0,0)',
+                plot_bgcolor='rgba(0,0,0,0)'
+            )
+
+            st.plotly_chart(fig_candle, use_container_width=True)
 
         st.write("#### Investment Velocity")
         yearly_stats = df.groupby('entry_year').agg({'invested': 'sum', 'id': 'count'}).reset_index().sort_values('entry_year')
@@ -409,17 +602,175 @@ with tabs[3]:
 
 # --- TAB 4: ADMIN FEE ---
 with tabs[4]:
-    admin_cost = (admin_cost / 100) * target_fund
-    operations_fee = admin_cost
-    management_fee = admin_cost * investment_period
+    from datetime import datetime
+
+    # ------------------ BASE FEES ------------------
+    admin_cost_total = (management_fee / 100) * target_fund
+    operations_fee = admin_cost_total
+    management_fee_total = admin_cost_total * investment_period
+    total_iv_costs = admin_cost_total + operations_fee + management_fee_total
 
     fee_df = pd.DataFrame(
         {
-            "Fee Type": ["Admin Cost", "Operations Fee", "Management Fee"],
-            "Amount ($)": [admin_cost, operations_fee, management_fee],
+            "Fee Type": ["Admin Cost", "Operations Fee", "Management Fee", "Total IV Costs"],
+            "Amount ($)": [admin_cost_total, operations_fee, management_fee_total, total_iv_costs],
         }
     )
-
     fee_df["Amount ($)"] = fee_df["Amount ($)"].apply(fmt)
-    fee_df.index += 1  # Start index at 1 for better readability
+    fee_df.index += 1
     st.table(fee_df)
+
+    st.divider()
+    st.subheader("📆 G&A Cost Projection")
+
+    # ------------------ PERIOD INPUT ------------------
+    period = st.number_input(
+        "Number of Years to Display",
+        min_value=1,
+        max_value=int(fund_life),
+        value=int(fund_life),
+        step=1,
+    )
+
+    start_year = datetime.now().year
+    years = [str(start_year + i) for i in range(period)]
+
+    def ceil_fmt(x):
+        return math.ceil(x)
+
+    # ================== ADMIN COSTS ==================
+    iv_first_year = admin_cost_total * 0.05
+    iv_values = [iv_first_year if i == 0 else iv_first_year / 2 for i in range(period)]
+
+    contracts_values = [
+        operations_fee * 0.2 if i == 0 else operations_fee * 0.02
+        for i in range(period)
+    ]
+
+    iv_total = sum(iv_values)
+    contracts_total = sum(contracts_values)
+    others_admin_total = admin_cost_total - (iv_total + contracts_total)
+    others_admin_values = [others_admin_total / period] * period
+
+    admin_df = pd.DataFrame(
+        {
+            years[i]: [
+                iv_values[i],
+                contracts_values[i],
+                others_admin_values[i],
+            ]
+            for i in range(period)
+        },
+        index=[
+            "IV Establishment & Licensing",
+            "Contracts & Agreements",
+            "Others",
+        ],
+    )
+
+    admin_df["Total"] = admin_df.sum(axis=1)
+    admin_df.loc["Total"] = admin_df.sum(axis=0)
+    admin_df = admin_df.applymap(ceil_fmt)
+
+    st.write("### Legal & Admin Costs")
+    st.dataframe(
+        admin_df.applymap(lambda x: f"{x:,}"),
+        use_container_width=True,
+    )
+
+    # ================== OPERATIONS COSTS ==================
+    ops_df = pd.DataFrame(
+        {
+            years[i]: [
+                operations_fee * 0.05 if i < 2 else 0,
+                (operations_fee * 0.4) / period,
+                operations_fee * 0.02,
+                operations_fee * 0.04,
+            ]
+            for i in range(period)
+        },
+        index=[
+            "Startups Onboarding",
+            "Marketing & Events",
+            "Annual Fund Performance Report",
+            "Accounting & Auditing",
+        ],
+    )
+
+    ops_known_total = ops_df.sum().sum()
+    ops_others_total = operations_fee - ops_known_total
+    ops_df.loc["Others"] = [ops_others_total / period] * period
+
+    ops_df["Total"] = ops_df.sum(axis=1)
+    ops_df.loc["Total"] = ops_df.sum(axis=0)
+    ops_df = ops_df.applymap(ceil_fmt)
+
+    st.write("### Operations Costs")
+    st.dataframe(
+        ops_df.applymap(lambda x: f"{x:,}"),
+        use_container_width=True,
+    )
+
+    # ================== FUND MANAGEMENT ==================
+    mgmt_per_year = management_fee_total / period
+    mgmt_df = pd.DataFrame(
+        [[mgmt_per_year] * period + [management_fee_total]],
+        index=["Fund Management"],
+        columns=years + ["Total"],
+    ).applymap(ceil_fmt)
+
+    st.write("### Fund Management")
+    st.dataframe(
+        mgmt_df.applymap(lambda x: f"{x:,}"),
+        use_container_width=True,
+    )
+
+    # ================== TOTAL G&A ==================
+    total_ga_series = (
+        admin_df.loc["Total", years]
+        + ops_df.loc["Total", years]
+        + mgmt_df.loc["Fund Management", years]
+    )
+
+    total_ga_df = pd.DataFrame(
+        [total_ga_series.tolist() + [total_ga_series.sum()]],
+        index=["Total G&A"],
+        columns=years + ["Total"],
+    ).applymap(ceil_fmt)
+
+    st.write("## 💼 Total G&A")
+    st.dataframe(
+        total_ga_df.applymap(lambda x: f"{x:,}"),
+        use_container_width=True,
+    )
+
+    # ================== GRAPHS ==================
+    st.divider()
+    st.subheader("📈 Cost Visualization")
+
+    # ---- Total G&A per Year (NO TOTAL) ----
+    fig_ga = px.line(
+        x=years,
+        y=total_ga_series.values,
+        title="Total G&A per Year",
+        labels={"x": "Year", "y": "Cost ($)"},
+    )
+    st.plotly_chart(fig_ga, use_container_width=True)
+
+    # ---- Operations Costs Comparison (NO TOTAL) ----
+    ops_chart_df = ops_df.loc[:, years].T
+    fig_ops = px.line(
+        ops_chart_df,
+        title="Operations Costs Comparison",
+        labels={"value": "Cost ($)", "index": "Year"},
+    )
+    st.plotly_chart(fig_ops, use_container_width=True)
+
+    # ---- Admin Costs Comparison (NO TOTAL) ----
+    admin_chart_df = admin_df.loc[:, years].T
+    fig_admin = px.line(
+        admin_chart_df,
+        title="Admin Costs Comparison",
+        labels={"value": "Cost ($)", "index": "Year"},
+    )
+    st.plotly_chart(fig_admin, use_container_width=True)
